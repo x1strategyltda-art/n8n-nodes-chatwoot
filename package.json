@@ -1,0 +1,61 @@
+{
+	"name": "n8n-nodes-chatwoot-x1",
+	"version": "0.2.0",
+	"description": "Community n8n node for Chatwoot — covers the full Application API (contacts, conversations, messages, labels, inboxes, teams, agents, webhooks, reports, custom attributes, automations, canned responses) plus chatwoot-x exclusive resources (lifecycle stages, flows, flow folders, flow runs). Built by Pedro Lucas (x1strategyltda).",
+	"keywords": [
+		"n8n-community-node-package",
+		"chatwoot",
+		"chatwoot-x",
+		"customer-support",
+		"omnichannel",
+		"whatsapp",
+		"helpdesk",
+		"crm"
+	],
+	"license": "MIT",
+	"homepage": "https://github.com/x1strategyltda-art/n8n-nodes-chatwoot",
+	"author": {
+		"name": "Pedro Lucas (x1strategyltda)",
+		"email": "x1strategyltda@gmail.com"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/x1strategyltda-art/n8n-nodes-chatwoot.git"
+	},
+	"bugs": {
+		"url": "https://github.com/x1strategyltda-art/n8n-nodes-chatwoot/issues"
+	},
+	"scripts": {
+		"build": "n8n-node build",
+		"build:watch": "tsc --watch",
+		"dev": "n8n-node dev",
+		"lint": "n8n-node lint",
+		"lint:fix": "n8n-node lint --fix",
+		"release": "n8n-node release",
+		"prepublishOnly": "n8n-node prerelease"
+	},
+	"files": [
+		"dist"
+	],
+	"n8n": {
+		"n8nNodesApiVersion": 1,
+		"strict": true,
+		"credentials": [
+			"dist/credentials/ChatwootApi.credentials.js"
+		],
+		"nodes": [
+			"dist/nodes/Chatwoot/Chatwoot.node.js"
+		]
+	},
+	"devDependencies": {
+		"@n8n/node-cli": "*",
+		"eslint": "9.39.4",
+		"n8n-workflow": "^2.16.0",
+		"prettier": "3.8.3",
+		"release-it": "20.0.1",
+		"typescript": "5.9.3"
+	},
+	"peerDependencies": {
+		"n8n-workflow": "*"
+	}
+}

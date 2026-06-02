@@ -1,0 +1,21 @@
+{
+	"node": "n8n-nodes-base.chatwoot",
+	"nodeVersion": "1.0",
+	"codexVersion": "1.0",
+	"categories": [
+		"Communication",
+		"Marketing"
+	],
+	"resources": {
+		"credentialDocumentation": [
+			{
+				"url": "https://www.chatwoot.com/developers/api"
+			}
+		],
+		"primaryDocumentation": [
+			{
+				"url": "https://www.chatwoot.com/docs"
+			}
+		]
+	}
+}
