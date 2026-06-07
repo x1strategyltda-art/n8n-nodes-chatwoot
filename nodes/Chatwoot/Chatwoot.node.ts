@@ -809,7 +809,6 @@ export class Chatwoot implements INodeType {
 					{ name: 'Contact', value: 'contact' },
 					{ name: 'Contact Field', value: 'customAttribute' },
 					{ name: 'Contact Tag', value: 'contactLabel' },
-					{ name: 'Conversation', value: 'conversation' },
 					{ name: 'Conversation Assignment', value: 'conversationAssignment' },
 					{ name: 'Lifecycle Stage (ChatBot)', value: 'lifecycleStage' },
 					{ name: 'Message', value: 'message' },

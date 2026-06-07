@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-chatwoot-x1",
-	"version": "0.5.3",
+	"version": "0.5.4",
 	"description": "Community n8n node for Chatwoot — covers the full Application API (contacts, conversations, messages, labels, inboxes, teams, agents, webhooks, reports, custom attributes, automations, canned responses) plus chatwoot-x exclusive resources (lifecycle stages, flows, flow folders, flow runs). Built by Pedro Lucas (x1strategyltda).",
 	"keywords": [
 		"n8n-community-node-package",
