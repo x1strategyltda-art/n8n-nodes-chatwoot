@@ -622,9 +622,6 @@ async function removeLabelsFromContactPreSend(
 // preSends gerados via factory pra operations que precisam de Contact ID resolvido.
 const getContactByIdentifierPreSend = buildContactByIdentifierPreSend('', 'GET');
 const deleteContactByIdentifierPreSend = buildContactByIdentifierPreSend('', 'DELETE');
-const listConversationsByIdentifierPreSend = buildContactByIdentifierPreSend('/conversations', 'GET');
-const listContactableInboxesByIdentifierPreSend = buildContactByIdentifierPreSend('/contactable_inboxes', 'GET');
-const createContactInboxByIdentifierPreSend = buildContactByIdentifierPreSend('/contact_inboxes', 'POST');
 const listLabelsByIdentifierPreSend = buildContactByIdentifierPreSend(
 	'/labels',
 	'GET',
@@ -809,18 +806,14 @@ export class Chatwoot implements INodeType {
 				type: 'options',
 				noDataExpression: true,
 				options: [
-					{ name: 'Agent', value: 'agent' },
 					{ name: 'Contact', value: 'contact' },
 					{ name: 'Contact Field', value: 'customAttribute' },
 					{ name: 'Contact Tag', value: 'contactLabel' },
 					{ name: 'Conversation', value: 'conversation' },
 					{ name: 'Conversation Assignment', value: 'conversationAssignment' },
-					{ name: 'Inbox', value: 'inbox' },
 					{ name: 'Lifecycle Stage (ChatBot)', value: 'lifecycleStage' },
 					{ name: 'Message', value: 'message' },
-					{ name: 'Profile', value: 'profile' },
 					{ name: 'Tag', value: 'label' },
-					{ name: 'Team', value: 'team' },
 				],
 				default: 'contact',
 			},
@@ -1232,45 +1225,6 @@ export class Chatwoot implements INodeType {
 						action: 'Search contacts',
 						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts/search' } },
 					},
-					{
-						name: 'Filter',
-						value: 'filter',
-						action: 'Filter contacts',
-						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts/filter' } },
-					},
-					{
-						name: 'List Conversations',
-						value: 'listConversations',
-						action: 'List a contact conversations',
-						routing: {
-							request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' },
-							send: { preSend: [listConversationsByIdentifierPreSend] },
-						},
-					},
-					{
-						name: 'List Contactable Inboxes',
-						value: 'listContactableInboxes',
-						action: 'List contactable inboxes',
-						routing: {
-							request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' },
-							send: { preSend: [listContactableInboxesByIdentifierPreSend] },
-						},
-					},
-					{
-						name: 'Create Contact Inbox',
-						value: 'createContactInbox',
-						action: 'Create contact inbox',
-						routing: {
-							request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' },
-							send: { preSend: [createContactInboxByIdentifierPreSend] },
-						},
-					},
-					{
-						name: 'Merge',
-						value: 'merge',
-						action: 'Merge two contacts',
-						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/actions/contact_merge' } },
-					},
 				],
 				default: 'list',
 			},
@@ -1311,14 +1265,6 @@ export class Chatwoot implements INodeType {
 				routing: { send: { type: 'query', property: 'sort' } },
 			},
 			{
-				displayName: 'Filter Payload (JSON)',
-				name: 'filterPayload',
-				type: 'json',
-				default: '{\n  "payload": []\n}',
-				displayOptions: { show: { resource: ['contact'], operation: ['filter'] } },
-				routing: { send: { type: 'body' } },
-			},
-			{
 				displayName: 'Name',
 				name: 'name',
 				type: 'string',
@@ -1335,51 +1281,13 @@ export class Chatwoot implements INodeType {
 				default: {},
 				displayOptions: { show: { resource: ['contact'], operation: ['create'] } },
 				options: [
-					{ displayName: 'Email', name: 'email', type: 'string',
-																																												placeholder: 'name@email.com', default: '', routing: { send: { type: 'body', property: 'email' } } },
+					{ displayName: 'Email', name: 'email', type: 'string', placeholder: 'name@email.com', default: '', routing: { send: { type: 'body', property: 'email' } } },
 					{ displayName: 'Phone Number (E.164)', name: 'phone_number', type: 'string', default: '', placeholder: '+5511999999999', routing: { send: { type: 'body', property: 'phone_number' } } },
 					{ displayName: 'Identifier', name: 'identifier', type: 'string', default: '', routing: { send: { type: 'body', property: 'identifier' } } },
 					{ displayName: 'Avatar URL', name: 'avatar_url', type: 'string', default: '', routing: { send: { type: 'body', property: 'avatar_url' } } },
 					{ displayName: 'Custom Attributes (JSON)', name: 'custom_attributes', type: 'json', default: '{}', routing: { send: { type: 'body', property: 'custom_attributes' } } },
 					{ displayName: 'Additional Attributes (JSON)', name: 'additional_attributes', type: 'json', default: '{}', routing: { send: { type: 'body', property: 'additional_attributes' } } },
 				],
-			},
-			{
-				displayName: 'Inbox ID',
-				name: 'inbox_id',
-				type: 'string',
-				required: true,
-				default: '',
-				displayOptions: { show: { resource: ['contact'], operation: ['createContactInbox'] } },
-				routing: { send: { type: 'body', property: 'inbox_id' } },
-			},
-			{
-				displayName: 'Source ID',
-				name: 'source_id',
-				type: 'string',
-				default: '',
-				displayOptions: { show: { resource: ['contact'], operation: ['createContactInbox'] } },
-				routing: { send: { type: 'body', property: 'source_id' } },
-			},
-			{
-				displayName: 'Base Contact ID',
-				name: 'base_contact_id',
-				type: 'string',
-				required: true,
-				default: '',
-				displayOptions: { show: { resource: ['contact'], operation: ['merge'] } },
-				routing: { send: { type: 'body', property: 'base_contact_id' } },
-				description: 'ID do contato que VAI SER MANTIDO',
-			},
-			{
-				displayName: 'Mergee Contact ID',
-				name: 'mergee_contact_id',
-				type: 'string',
-				required: true,
-				default: '',
-				displayOptions: { show: { resource: ['contact'], operation: ['merge'] } },
-				routing: { send: { type: 'body', property: 'mergee_contact_id' } },
-				description: 'ID do contato que vai ser absorvido e DELETADO',
 			},
 
 			// ═══════════════════════════════════════════════════════════════════
