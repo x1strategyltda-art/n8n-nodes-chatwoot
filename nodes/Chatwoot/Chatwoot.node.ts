@@ -27,6 +27,46 @@ interface ChatwootCredentialsData {
 	apiAccessToken: string;
 }
 
+// Base URL fixa do ChatBot. UI da credencial pede SÓ a API Key —
+// baseUrl e accountId são resolvidos aqui automaticamente.
+const CHATBOT_BASE_URL = 'https://app.chatbotx1.com';
+
+// Cache de accountId por token. Como o token é gerado pra um único
+// usuário-integração de uma única conta, o lookup só roda 1× por token
+// na vida do worker n8n. Map module-level sobrevive entre executions.
+const __accountIdCache = new Map<string, string>();
+
+/**
+ * Resolve as credenciais completas a partir do token. Faz GET /api/v1/profile
+ * (cacheado) pra descobrir o accountId vinculado ao token.
+ *
+ * Usar em todo helper async (loadOptions, preSend, resourceMapper) no lugar
+ * de `await this.getCredentials('chatwootApi')`.
+ *
+ * Routing-style operations (URL com `={{$credentials.accountId}}`) NÃO
+ * precisam desse helper — `preAuthentication` da credencial injeta os
+ * valores resolvidos antes de cada request autenticado.
+ */
+async function resolveChatwootCredentials(this: any): Promise<ChatwootCredentialsData> {
+	const raw = (await this.getCredentials('chatwootApi')) as { apiAccessToken: string };
+	const apiAccessToken = raw.apiAccessToken;
+
+	let accountId = __accountIdCache.get(apiAccessToken);
+	if (!accountId) {
+		const profile = (await this.helpers.httpRequest({
+			method: 'GET',
+			url: `${CHATBOT_BASE_URL}/api/v1/profile`,
+			headers: { api_access_token: apiAccessToken },
+			json: true,
+		})) as { account_id?: number | string; accounts?: Array<{ id: number | string }> };
+
+		accountId = String(profile.account_id ?? profile.accounts?.[0]?.id ?? '1');
+		__accountIdCache.set(apiAccessToken, accountId);
+	}
+
+	return { baseUrl: CHATBOT_BASE_URL, accountId, apiAccessToken };
+}
+
 const CONTACT_CUSTOM_ATTR_MODEL = 1; // 0=Conversation, 1=Contact (Chatwoot enum)
 
 // Mapa attribute_display_type → tipo do resourceMapper (n8n FieldType).
@@ -45,7 +85,7 @@ const ATTRIBUTE_TYPE_MAP: Record<number, ResourceMapperField['type']> = {
 async function getCustomAttributesForContactMapper(
 	this: ILoadOptionsFunctions,
 ): Promise<ResourceMapperFields> {
-	const credentials = (await this.getCredentials('chatwootApi')) as unknown as ChatwootCredentialsData;
+	const credentials = await resolveChatwootCredentials.call(this);
 	const url = `${credentials.baseUrl}/api/v1/accounts/${credentials.accountId}/custom_attribute_definitions`;
 
 	const response = await this.helpers.httpRequestWithAuthentication.call(this, 'chatwootApi', {
@@ -198,7 +238,7 @@ async function createOrUpdateContactPreSend(
 	this: IExecuteSingleFunctions,
 	requestOptions: IHttpRequestOptions,
 ): Promise<IHttpRequestOptions> {
-	const credentials = (await this.getCredentials('chatwootApi')) as unknown as ChatwootCredentialsData;
+	const credentials = await resolveChatwootCredentials.call(this);
 	const { baseUrl, accountId } = credentials;
 
 	const identifierType = this.getNodeParameter('createOrUpdateIdentifierType') as
@@ -235,7 +275,7 @@ async function updateContactPreSend(
 	this: IExecuteSingleFunctions,
 	requestOptions: IHttpRequestOptions,
 ): Promise<IHttpRequestOptions> {
-	const credentials = (await this.getCredentials('chatwootApi')) as unknown as ChatwootCredentialsData;
+	const credentials = await resolveChatwootCredentials.call(this);
 	const { baseUrl, accountId } = credentials;
 
 	const identifierType = this.getNodeParameter('createOrUpdateIdentifierType') as
@@ -286,7 +326,7 @@ async function createOrUpdateContactPostReceive(
 async function getLabelsForContact(
 	this: ILoadOptionsFunctions,
 ): Promise<INodePropertyOptions[]> {
-	const credentials = (await this.getCredentials('chatwootApi')) as unknown as ChatwootCredentialsData;
+	const credentials = await resolveChatwootCredentials.call(this);
 	const response = (await this.helpers.httpRequestWithAuthentication.call(this, 'chatwootApi', {
 		method: 'GET',
 		url: `${credentials.baseUrl}/api/v1/accounts/${credentials.accountId}/labels`,
@@ -310,7 +350,7 @@ function buildContactByIdentifierPreSend(
 	valueParam = 'createOrUpdateIdentifier',
 ): (this: IExecuteSingleFunctions, requestOptions: IHttpRequestOptions) => Promise<IHttpRequestOptions> {
 	return async function (this, requestOptions) {
-		const credentials = (await this.getCredentials('chatwootApi')) as unknown as ChatwootCredentialsData;
+		const credentials = await resolveChatwootCredentials.call(this);
 		const { baseUrl, accountId } = credentials;
 
 		const identifierType = this.getNodeParameter(typeParam) as 'phone_number' | 'identifier';
@@ -343,7 +383,7 @@ async function addLabelsToContactPreSend(
 	this: IExecuteSingleFunctions,
 	requestOptions: IHttpRequestOptions,
 ): Promise<IHttpRequestOptions> {
-	const credentials = (await this.getCredentials('chatwootApi')) as unknown as ChatwootCredentialsData;
+	const credentials = await resolveChatwootCredentials.call(this);
 	const { baseUrl, accountId } = credentials;
 
 	const identifierType = this.getNodeParameter('contactLabelIdentifierType') as
@@ -392,7 +432,7 @@ async function removeLabelsFromContactPreSend(
 	this: IExecuteSingleFunctions,
 	requestOptions: IHttpRequestOptions,
 ): Promise<IHttpRequestOptions> {
-	const credentials = (await this.getCredentials('chatwootApi')) as unknown as ChatwootCredentialsData;
+	const credentials = await resolveChatwootCredentials.call(this);
 	const { baseUrl, accountId } = credentials;
 
 	const identifierType = this.getNodeParameter('contactLabelIdentifierType') as

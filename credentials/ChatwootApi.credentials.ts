@@ -1,33 +1,36 @@
 import type {
 	IAuthenticateGeneric,
-	Icon,
+	ICredentialDataDecryptedObject,
 	ICredentialTestRequest,
 	ICredentialType,
+	IHttpRequestHelper,
+	Icon,
 	INodeProperties,
 } from 'n8n-workflow';
 
 /**
- * Chatwoot API credential (Application API).
+ * ChatBot API credential — UI simplificada (paridade Respond.io).
  *
- * Authentication: API access token sent via header `api_access_token`.
+ * O usuário só preenche UM campo: a API Access Token gerada em
+ * ChatBot → Configurações → Integrações → n8n → Gerar chave de API.
  *
- * Where to find:
- *   Chatwoot UI → Profile Settings → Access Token
+ * baseUrl e accountId são resolvidos automaticamente:
+ *   - baseUrl: hardcoded em `CHATBOT_BASE_URL`
+ *   - accountId: descoberto via GET /api/v1/profile no preAuthentication
  *
- * Docs: https://www.chatwoot.com/developers/api/
- *
- * The Application API operates on a single account. The numeric Account ID
- * lives in your Chatwoot URL right after `/app/accounts/`. Example:
- *   https://staging.chatwootx1.us/app/accounts/1/conversations  →  accountId = 1
+ * O token gerado pela integração nativa do ChatBot pertence a um User
+ * dedicado vinculado a uma única conta, então o accountId é determinístico.
  */
+const CHATBOT_BASE_URL = 'https://app.chatbotx1.com';
+
 export class ChatwootApi implements ICredentialType {
 	name = 'chatwootApi';
 
-	displayName = 'Chatwoot API';
+	displayName = 'ChatBot API';
 
 	icon: Icon = 'file:chatwoot.png';
 
-	documentationUrl = 'https://www.chatwoot.com/developers/api/';
+	documentationUrl = 'https://app.chatbotx1.com/';
 
 	properties: INodeProperties[] = [
 		{
@@ -38,28 +41,38 @@ export class ChatwootApi implements ICredentialType {
 			required: true,
 			default: '',
 			description:
-				'Token gerado no Chatwoot em Profile Settings → Access Token. Enviado no cabeçalho api_access_token.',
-		},
-		{
-			displayName: 'Base URL',
-			name: 'baseUrl',
-			type: 'string',
-			default: 'https://staging.chatwootx1.us',
-			placeholder: 'https://staging.chatwootx1.us',
-			required: true,
-			description:
-				'Origem da sua instância Chatwoot (sem barra no fim, sem /api/v1). Padrão: staging.chatwootx1.us.',
-		},
-		{
-			displayName: 'Account ID',
-			name: 'accountId',
-			type: 'string',
-			default: '1',
-			required: true,
-			description:
-				'ID numérico da conta (workspace) no Chatwoot. Visível na URL: /app/accounts/<id>/...',
+				'Gere em ChatBot → Configurações → Integrações → n8n → Gerar chave de API. Enviada no header api_access_token.',
 		},
 	];
+
+	/**
+	 * Resolve baseUrl + accountId a partir do token. Chamado pelo n8n antes
+	 * de cada request autenticado — n8n injeta o resultado nas credentials
+	 * do request.
+	 *
+	 * Routing-style operations usam `{{$credentials.baseUrl}}` e
+	 * `{{$credentials.accountId}}` direto — preAuthentication faz com que
+	 * esses placeholders resolvam aos valores corretos.
+	 */
+	async preAuthentication(
+		this: IHttpRequestHelper,
+		credentials: ICredentialDataDecryptedObject,
+	) {
+		const baseUrl = CHATBOT_BASE_URL;
+
+		const response = (await this.helpers.httpRequest({
+			method: 'GET',
+			url: `${baseUrl}/api/v1/profile`,
+			headers: { api_access_token: credentials.apiAccessToken as string },
+			json: true,
+		})) as { account_id?: number | string; accounts?: Array<{ id: number | string }> };
+
+		const accountId = String(
+			response.account_id ?? response.accounts?.[0]?.id ?? '1',
+		);
+
+		return { baseUrl, accountId };
+	}
 
 	authenticate: IAuthenticateGeneric = {
 		type: 'generic',
@@ -72,7 +85,7 @@ export class ChatwootApi implements ICredentialType {
 
 	test: ICredentialTestRequest = {
 		request: {
-			baseURL: '={{$credentials.baseUrl}}',
+			baseURL: CHATBOT_BASE_URL,
 			url: '/api/v1/profile',
 			method: 'GET',
 		},
