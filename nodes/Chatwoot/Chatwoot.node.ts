@@ -377,25 +377,113 @@ async function getTeams(this: ILoadOptionsFunctions): Promise<INodePropertyOptio
 	return options;
 }
 
+// Cache de lifecycle stages por token+account (id → {title, emoji, color}).
+// Usado tanto pelo loadOptions (dropdown) quanto pelo postReceive (enriquecer contact).
+const __lifecycleStagesCache = new Map<string, Map<number, IDataObject>>();
+
+async function fetchLifecycleStagesMap(
+	this: ILoadOptionsFunctions | IExecuteSingleFunctions,
+	baseUrl: string,
+	accountId: string,
+	apiAccessToken: string,
+): Promise<Map<number, IDataObject>> {
+	const cacheKey = `${apiAccessToken}:${accountId}`;
+	const cached = __lifecycleStagesCache.get(cacheKey);
+	if (cached) return cached;
+
+	const response = (await this.helpers.httpRequestWithAuthentication.call(this, 'chatwootApi', {
+		method: 'GET',
+		url: `${baseUrl}/api/v1/accounts/${accountId}/lifecycle_stages`,
+		json: true,
+	})) as IDataObject;
+
+	const stages =
+		(response?.payload as IDataObject[]) ||
+		(Array.isArray(response) ? (response as unknown as IDataObject[]) : []);
+
+	const map = new Map<number, IDataObject>();
+	stages.forEach((s) => {
+		const id = Number(s.id);
+		if (!Number.isNaN(id)) map.set(id, s);
+	});
+	__lifecycleStagesCache.set(cacheKey, map);
+	return map;
+}
+
 // loadOptions: lista lifecycle stages (chatwoot-x) pra dropdown.
 async function getLifecycleStages(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 	const credentials = await resolveChatwootCredentials.call(this);
 	try {
-		const response = (await this.helpers.httpRequestWithAuthentication.call(this, 'chatwootApi', {
-			method: 'GET',
-			url: `${credentials.baseUrl}/api/v1/accounts/${credentials.accountId}/lifecycle_stages`,
-			json: true,
-		})) as IDataObject[] | IDataObject;
+		const map = await fetchLifecycleStagesMap.call(
+			this,
+			credentials.baseUrl,
+			credentials.accountId,
+			credentials.apiAccessToken,
+		);
 
-		const stages = Array.isArray(response) ? response : ((response as IDataObject)?.payload as IDataObject[]) || [];
 		const options: INodePropertyOptions[] = [{ name: '— Remover estágio —', value: '' }];
-		stages.forEach((s) => {
-			options.push({ name: String(s.name ?? s.id), value: String(s.id ?? '') });
-		});
+		[...map.values()]
+			.sort((a, b) => Number(a.position ?? 0) - Number(b.position ?? 0))
+			.forEach((s) => {
+				const emoji = s.emoji ? `${s.emoji} ` : '';
+				const title = String(s.title ?? s.name ?? `Stage ${s.id}`);
+				options.push({ name: `${emoji}${title}`, value: String(s.id ?? '') });
+			});
 		return options;
 	} catch (e) {
-		return [{ name: 'Erro ao buscar — sua instância tem lifecycle_stages?', value: '' }];
+		return [{ name: 'Erro ao buscar lifecycle_stages', value: '' }];
 	}
+}
+
+// postReceive: enriquece response do Contact com lifecycle_stage (objeto com
+// title/emoji/color resolvidos do cache). Quando o response retorna só
+// lifecycle_stage_id (número), o usuário ainda vê o nome legível.
+async function enrichContactWithLifecycleStage(
+	this: IExecuteSingleFunctions,
+	items: INodeExecutionData[],
+	_response: IN8nHttpFullResponse,
+): Promise<INodeExecutionData[]> {
+	if (!items.length) return items;
+
+	const credentials = await resolveChatwootCredentials.call(this);
+	let stagesMap: Map<number, IDataObject>;
+	try {
+		stagesMap = await fetchLifecycleStagesMap.call(
+			this,
+			credentials.baseUrl,
+			credentials.accountId,
+			credentials.apiAccessToken,
+		);
+	} catch {
+		return items;
+	}
+
+	const enrichOne = (contact: IDataObject): IDataObject => {
+		const sid = Number(contact.lifecycle_stage_id);
+		if (!Number.isNaN(sid) && stagesMap.has(sid)) {
+			const stage = stagesMap.get(sid)!;
+			contact.lifecycle_stage = {
+				id: stage.id,
+				title: stage.title,
+				emoji: stage.emoji,
+				color: stage.color,
+				position: stage.position,
+			};
+		} else {
+			contact.lifecycle_stage = null;
+		}
+		return contact;
+	};
+
+	return items.map((item) => {
+		const data = item.json as IDataObject;
+		if (Array.isArray(data?.payload)) {
+			data.payload = (data.payload as IDataObject[]).map((c) => enrichOne(c));
+		} else if (data?.id) {
+			enrichOne(data);
+		}
+		return { ...item, json: data };
+	});
 }
 
 // Factory: gera preSend que resolve Contact ID via identifier + monta URL final.
@@ -731,8 +819,6 @@ export class Chatwoot implements INodeType {
 					{ name: 'Contact Tag', value: 'contactLabel' },
 					{ name: 'Conversation', value: 'conversation' },
 					{ name: 'Conversation Assignment', value: 'conversationAssignment' },
-					{ name: 'Flow (ChatBot)', value: 'flow' },
-					{ name: 'Flow Run (ChatBot)', value: 'flowRun' },
 					{ name: 'Inbox', value: 'inbox' },
 					{ name: 'Lifecycle Stage (ChatBot)', value: 'lifecycleStage' },
 					{ name: 'Message', value: 'message' },
@@ -1072,13 +1158,19 @@ export class Chatwoot implements INodeType {
 						name: 'List',
 						value: 'list',
 						action: 'List contacts',
-						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' } },
+						routing: {
+							request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' },
+							output: { postReceive: [enrichContactWithLifecycleStage] },
+						},
 					},
 					{
 						name: 'Create',
 						value: 'create',
 						action: 'Create a contact',
-						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' } },
+						routing: {
+							request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' },
+							output: { postReceive: [enrichContactWithLifecycleStage] },
+						},
 					},
 					{
 						name: 'Get',
@@ -1088,7 +1180,7 @@ export class Chatwoot implements INodeType {
 						routing: {
 							request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' },
 							send: { preSend: [getContactByIdentifierPreSend] },
-							output: { postReceive: [createOrUpdateContactPostReceive] },
+							output: { postReceive: [createOrUpdateContactPostReceive, enrichContactWithLifecycleStage] },
 						},
 					},
 					{
@@ -1106,7 +1198,7 @@ export class Chatwoot implements INodeType {
 								preSend: [updateContactPreSend],
 							},
 							output: {
-								postReceive: [createOrUpdateContactPostReceive],
+								postReceive: [createOrUpdateContactPostReceive, enrichContactWithLifecycleStage],
 							},
 						},
 					},
@@ -1125,7 +1217,7 @@ export class Chatwoot implements INodeType {
 								preSend: [createOrUpdateContactPreSend],
 							},
 							output: {
-								postReceive: [createOrUpdateContactPostReceive],
+								postReceive: [createOrUpdateContactPostReceive, enrichContactWithLifecycleStage],
 							},
 						},
 					},
@@ -2338,6 +2430,7 @@ export class Chatwoot implements INodeType {
 						routing: {
 							request: { method: 'PATCH', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' },
 							send: { preSend: [lifecycleUpdateContactPreSend] },
+							output: { postReceive: [enrichContactWithLifecycleStage] },
 						},
 					},
 					{
@@ -2347,6 +2440,7 @@ export class Chatwoot implements INodeType {
 						routing: {
 							request: { method: 'PATCH', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' },
 							send: { preSend: [lifecycleUpdateContactPreSend] },
+							output: { postReceive: [enrichContactWithLifecycleStage] },
 						},
 					},
 					{
