@@ -340,6 +340,64 @@ async function getLabelsForContact(
 	}));
 }
 
+// loadOptions: lista agentes da conta pra dropdown de assign.
+async function getAgents(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+	const credentials = await resolveChatwootCredentials.call(this);
+	const response = (await this.helpers.httpRequestWithAuthentication.call(this, 'chatwootApi', {
+		method: 'GET',
+		url: `${credentials.baseUrl}/api/v1/accounts/${credentials.accountId}/agents`,
+		json: true,
+	})) as IDataObject[] | IDataObject;
+
+	const agents = Array.isArray(response) ? response : ((response as IDataObject)?.payload as IDataObject[]) || [];
+	const options: INodePropertyOptions[] = [{ name: '— Desatribuir —', value: '' }];
+	agents.forEach((a) => {
+		options.push({
+			name: `${a.name ?? a.email ?? a.id} (${a.role ?? 'agent'})`,
+			value: String(a.id ?? ''),
+		});
+	});
+	return options;
+}
+
+// loadOptions: lista teams da conta pra dropdown de assign.
+async function getTeams(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+	const credentials = await resolveChatwootCredentials.call(this);
+	const response = (await this.helpers.httpRequestWithAuthentication.call(this, 'chatwootApi', {
+		method: 'GET',
+		url: `${credentials.baseUrl}/api/v1/accounts/${credentials.accountId}/teams`,
+		json: true,
+	})) as IDataObject[] | IDataObject;
+
+	const teams = Array.isArray(response) ? response : ((response as IDataObject)?.payload as IDataObject[]) || [];
+	const options: INodePropertyOptions[] = [{ name: '— Desatribuir —', value: '' }];
+	teams.forEach((t) => {
+		options.push({ name: String(t.name ?? t.id), value: String(t.id ?? '') });
+	});
+	return options;
+}
+
+// loadOptions: lista lifecycle stages (chatwoot-x) pra dropdown.
+async function getLifecycleStages(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+	const credentials = await resolveChatwootCredentials.call(this);
+	try {
+		const response = (await this.helpers.httpRequestWithAuthentication.call(this, 'chatwootApi', {
+			method: 'GET',
+			url: `${credentials.baseUrl}/api/v1/accounts/${credentials.accountId}/lifecycle_stages`,
+			json: true,
+		})) as IDataObject[] | IDataObject;
+
+		const stages = Array.isArray(response) ? response : ((response as IDataObject)?.payload as IDataObject[]) || [];
+		const options: INodePropertyOptions[] = [{ name: '— Remover estágio —', value: '' }];
+		stages.forEach((s) => {
+			options.push({ name: String(s.name ?? s.id), value: String(s.id ?? '') });
+		});
+		return options;
+	} catch (e) {
+		return [{ name: 'Erro ao buscar — sua instância tem lifecycle_stages?', value: '' }];
+	}
+}
+
 // Factory: gera preSend que resolve Contact ID via identifier + monta URL final.
 // Parametrizado em `typeParam`/`valueParam` pra suportar tanto o bloco contact
 // (createOrUpdateXxx) quanto contactLabel (contactLabelXxx).
@@ -490,6 +548,127 @@ const listLabelsByIdentifierPreSend = buildContactByIdentifierPreSend(
 	'contactLabelIdentifier',
 );
 
+// ──────────────────────────────────────────────────────────────────────
+//   Helper: Resolver Conversation a partir do Contact Identifier
+//   (Respond.io-style — o usuário não precisa saber conversation_id)
+// ──────────────────────────────────────────────────────────────────────
+
+// Busca contato + retorna a conversa MAIS RECENTE dele. Joga erro se contato
+// não existe ou se ainda não tem nenhuma conversa.
+async function findLatestConversationByContactIdentifier(
+	this: IExecuteSingleFunctions,
+	baseUrl: string,
+	accountId: string,
+	identifierType: 'phone_number' | 'identifier',
+	identifierValue: string,
+): Promise<{ contactId: number; conversationId: number }> {
+	const contact = await searchContactByIdentifier.call(
+		this,
+		baseUrl,
+		accountId,
+		identifierType,
+		identifierValue,
+	);
+	if (!contact) {
+		throw new Error(
+			`Contato não encontrado com ${identifierType}="${identifierValue}". Verifique formato E.164 (+5511...) ou identifier custom.`,
+		);
+	}
+	const contactId = contact.id as number;
+
+	const convsResp = (await this.helpers.httpRequestWithAuthentication.call(
+		this,
+		'chatwootApi',
+		{
+			method: 'GET',
+			url: `${baseUrl}/api/v1/accounts/${accountId}/contacts/${contactId}/conversations`,
+			json: true,
+		},
+	)) as IDataObject;
+
+	const payload =
+		(convsResp?.payload as IDataObject[]) || (convsResp?.data as { payload?: IDataObject[] })?.payload || [];
+	if (!payload.length) {
+		throw new Error(
+			`Contato ${contactId} (${identifierValue}) ainda não tem conversas. Aguarde a primeira mensagem chegar ou crie uma manualmente.`,
+		);
+	}
+
+	// Ordena por last_activity_at desc (mais recente primeiro). Fallback created_at.
+	const sorted = [...payload].sort((a, b) => {
+		const aTs = ((a.last_activity_at as number) || (a.created_at as number) || 0) as number;
+		const bTs = ((b.last_activity_at as number) || (b.created_at as number) || 0) as number;
+		return bTs - aTs;
+	});
+
+	return { contactId, conversationId: sorted[0].id as number };
+}
+
+// Factory: gera preSend que resolve Conversation ID via Contact Identifier
+// + monta URL final pra endpoint de conversation/{id}{pathSuffix}.
+function buildConversationByIdentifierPreSend(
+	pathSuffix: string,
+	methodOverride?: IHttpRequestMethods,
+	typeParam = 'identifierType',
+	valueParam = 'identifier',
+): (this: IExecuteSingleFunctions, requestOptions: IHttpRequestOptions) => Promise<IHttpRequestOptions> {
+	return async function (this, requestOptions) {
+		const credentials = await resolveChatwootCredentials.call(this);
+		const { baseUrl, accountId } = credentials;
+
+		const identifierType = this.getNodeParameter(typeParam) as 'phone_number' | 'identifier';
+		const identifierValue = (this.getNodeParameter(valueParam) as string)?.trim();
+		if (!identifierValue) {
+			throw new Error('Identificador do contato não pode ser vazio.');
+		}
+
+		const { conversationId } = await findLatestConversationByContactIdentifier.call(
+			this,
+			baseUrl,
+			accountId,
+			identifierType,
+			identifierValue,
+		);
+
+		requestOptions.url = `${baseUrl}/api/v1/accounts/${accountId}/conversations/${conversationId}${pathSuffix}`;
+		if (methodOverride) requestOptions.method = methodOverride;
+		return requestOptions;
+	};
+}
+
+// preSends gerados via factory pra cada operation que precisa de Conversation ID.
+const messageCreatePreSend = buildConversationByIdentifierPreSend('/messages', 'POST');
+const messageListPreSend = buildConversationByIdentifierPreSend('/messages', 'GET');
+const conversationGetPreSend = buildConversationByIdentifierPreSend('', 'GET');
+const conversationToggleStatusPreSend = buildConversationByIdentifierPreSend('/toggle_status', 'POST');
+const conversationAssignmentPreSend = buildConversationByIdentifierPreSend('/assignments', 'POST');
+
+// preSend Lifecycle Stage (Update / Remove): faz PATCH no contato setando lifecycle_stage_id.
+async function lifecycleUpdateContactPreSend(
+	this: IExecuteSingleFunctions,
+	requestOptions: IHttpRequestOptions,
+): Promise<IHttpRequestOptions> {
+	const credentials = await resolveChatwootCredentials.call(this);
+	const { baseUrl, accountId } = credentials;
+
+	const identifierType = this.getNodeParameter('identifierType') as 'phone_number' | 'identifier';
+	const identifierValue = (this.getNodeParameter('identifier') as string)?.trim();
+	if (!identifierValue) throw new Error('Identificador do contato não pode ser vazio.');
+
+	const contact = await searchContactByIdentifier.call(this, baseUrl, accountId, identifierType, identifierValue);
+	if (!contact) throw new Error(`Contato não encontrado com ${identifierType}="${identifierValue}".`);
+
+	const operation = this.getNodeParameter('operation') as string;
+	const stageId = operation === 'removeContactStage'
+		? null
+		: (this.getNodeParameter('lifecycleStageId') as string);
+
+	requestOptions.method = 'PATCH';
+	requestOptions.url = `${baseUrl}/api/v1/accounts/${accountId}/contacts/${contact.id}`;
+	requestOptions.body = { lifecycle_stage_id: stageId === '' ? null : stageId };
+	return requestOptions;
+}
+
 /**
  * Chatwoot community node.
  *
@@ -508,6 +687,9 @@ export class Chatwoot implements INodeType {
 	methods = {
 		loadOptions: {
 			getLabels: getLabelsForContact,
+			getAgents,
+			getTeams,
+			getLifecycleStages,
 		},
 		resourceMapping: {
 			getCustomAttributesForContact: getCustomAttributesForContactMapper,
@@ -1292,50 +1474,53 @@ export class Chatwoot implements INodeType {
 				displayOptions: { show: { resource: ['conversation'] } },
 				options: [
 					{
-						name: 'List',
-						value: 'list',
-						action: 'List conversations',
-						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations' } },
-					},
-					{
 						name: 'Get',
 						value: 'get',
-						action: 'Get a conversation',
-						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}' } },
+						action: 'Get a contact conversation',
+						routing: {
+							request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations' },
+							send: { preSend: [conversationGetPreSend] },
+						},
 					},
 					{
-						name: 'Update Status',
+						name: 'Open or Close',
 						value: 'toggleStatus',
-						action: 'Open or close a conversation',
-						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/toggle_status' } },
+						action: 'Open or close a contact conversation',
+						routing: {
+							request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations' },
+							send: { preSend: [conversationToggleStatusPreSend] },
+						},
+					},
+					{
+						name: 'List',
+						value: 'list',
+						action: 'List all conversations (with filters)',
+						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations' } },
 					},
 				],
-				default: 'list',
+				default: 'get',
 			},
 			{
-				displayName: 'Conversation ID',
-				name: 'conversationId',
-				type: 'string',
+				displayName: 'Tipo de Identificador',
+				name: 'identifierType',
+				type: 'options',
+				default: 'phone_number',
+				options: [
+					{ name: 'Telefone (E.164)', value: 'phone_number' },
+					{ name: 'Identifier (Custom ID)', value: 'identifier' },
+				],
 				required: true,
-				default: '',
 				displayOptions: { show: { resource: ['conversation'], operation: ['get', 'toggleStatus'] } },
 			},
 			{
-				displayName: 'List Filters',
-				name: 'listFilters',
-				type: 'collection',
-				placeholder: 'Add filter',
-				default: {},
-				displayOptions: { show: { resource: ['conversation'], operation: ['list'] } },
-				options: [
-					{ displayName: 'Assignee Type', name: 'assignee_type', type: 'options', default: 'me', options: [{ name: 'Me', value: 'me' }, { name: 'Unassigned', value: 'unassigned' }, { name: 'Assigned', value: 'assigned' }], routing: { send: { type: 'query', property: 'assignee_type' } } },
-					{ displayName: 'Status', name: 'status', type: 'options', default: 'open', options: [{ name: 'Open', value: 'open' }, { name: 'Resolved', value: 'resolved' }, { name: 'Pending', value: 'pending' }, { name: 'Snoozed', value: 'snoozed' }], routing: { send: { type: 'query', property: 'status' } } },
-					{ displayName: 'Inbox ID', name: 'inbox_id', type: 'string', default: '', routing: { send: { type: 'query', property: 'inbox_id' } } },
-					{ displayName: 'Team ID', name: 'team_id', type: 'string', default: '', routing: { send: { type: 'query', property: 'team_id' } } },
-					{ displayName: 'Tags', name: 'labels', type: 'multiOptions', default: [], typeOptions: { loadOptionsMethod: 'getLabels' }, routing: { send: { type: 'query', property: 'labels', value: '={{$value.join(",")}}' } } },
-					{ displayName: 'Q (Search Text)', name: 'q', type: 'string', default: '', routing: { send: { type: 'query', property: 'q' } } },
-					{ displayName: 'Page', name: 'page', type: 'number', default: 1, routing: { send: { type: 'query', property: 'page' } } },
-				],
+				displayName: 'Identificador do Contato',
+				name: 'identifier',
+				type: 'string',
+				required: true,
+				default: '',
+				placeholder: '+5511999999999 ou ID-cliente-123',
+				displayOptions: { show: { resource: ['conversation'], operation: ['get', 'toggleStatus'] } },
+				description: 'O node pega a conversa MAIS RECENTE desse contato',
 			},
 			{
 				displayName: 'Status',
@@ -1343,22 +1528,38 @@ export class Chatwoot implements INodeType {
 				type: 'options',
 				default: 'resolved',
 				options: [
-					{ name: 'Open', value: 'open' },
-					{ name: 'Resolved', value: 'resolved' },
-					{ name: 'Pending', value: 'pending' },
-					{ name: 'Snoozed', value: 'snoozed' },
+					{ name: 'Resolvida (Fechar)', value: 'resolved' },
+					{ name: 'Aberta', value: 'open' },
+					{ name: 'Pendente', value: 'pending' },
+					{ name: 'Adiada (Snoozed)', value: 'snoozed' },
 				],
 				displayOptions: { show: { resource: ['conversation'], operation: ['toggleStatus'] } },
 				routing: { send: { type: 'body', property: 'status' } },
 			},
 			{
-				displayName: 'Snoozed Until',
+				displayName: 'Adiar Até (Snoozed Until)',
 				name: 'snoozed_until',
 				type: 'string',
 				default: '',
 				placeholder: '2026-12-31T18:00:00Z',
 				displayOptions: { show: { resource: ['conversation'], operation: ['toggleStatus'], status: ['snoozed'] } },
 				routing: { send: { type: 'body', property: 'snoozed_until' } },
+			},
+			{
+				displayName: 'Filtros',
+				name: 'listFilters',
+				type: 'collection',
+				placeholder: 'Adicionar filtro',
+				default: {},
+				displayOptions: { show: { resource: ['conversation'], operation: ['list'] } },
+				options: [
+					{ displayName: 'Status', name: 'status', type: 'options', default: 'open', options: [{ name: 'Open', value: 'open' }, { name: 'Resolved', value: 'resolved' }, { name: 'Pending', value: 'pending' }, { name: 'Snoozed', value: 'snoozed' }], routing: { send: { type: 'query', property: 'status' } } },
+					{ displayName: 'Inbox ID', name: 'inbox_id', type: 'string', default: '', routing: { send: { type: 'query', property: 'inbox_id' } } },
+					{ displayName: 'Team ID', name: 'team_id', type: 'string', default: '', routing: { send: { type: 'query', property: 'team_id' } } },
+					{ displayName: 'Tags', name: 'labels', type: 'multiOptions', default: [], typeOptions: { loadOptionsMethod: 'getLabels' }, routing: { send: { type: 'query', property: 'labels', value: '={{$value.join(",")}}' } } },
+					{ displayName: 'Busca (texto)', name: 'q', type: 'string', default: '', routing: { send: { type: 'query', property: 'q' } } },
+					{ displayName: 'Página', name: 'page', type: 'number', default: 1, routing: { send: { type: 'query', property: 'page' } } },
+				],
 			},
 
 			// ═══════════════════════════════════════════════════════════════════
@@ -1374,49 +1575,71 @@ export class Chatwoot implements INodeType {
 					{
 						name: 'Assign Agent',
 						value: 'assignAgent',
-						action: 'Assign or replace the agent of a conversation',
-						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/assignments' } },
+						action: 'Assign or replace the agent of a contact conversation',
+						routing: {
+							request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations' },
+							send: { preSend: [conversationAssignmentPreSend] },
+						},
 					},
 					{
 						name: 'Assign Team',
 						value: 'assignTeam',
-						action: 'Assign or replace the team of a conversation',
-						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/assignments' } },
+						action: 'Assign or replace the team of a contact conversation',
+						routing: {
+							request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations' },
+							send: { preSend: [conversationAssignmentPreSend] },
+						},
 					},
 				],
 				default: 'assignAgent',
 			},
 			{
-				displayName: 'Conversation ID',
-				name: 'conversationId',
-				type: 'string',
+				displayName: 'Tipo de Identificador',
+				name: 'identifierType',
+				type: 'options',
+				default: 'phone_number',
+				options: [
+					{ name: 'Telefone (E.164)', value: 'phone_number' },
+					{ name: 'Identifier (Custom ID)', value: 'identifier' },
+				],
 				required: true,
-				default: '',
 				displayOptions: { show: { resource: ['conversationAssignment'] } },
 			},
 			{
-				displayName: 'Agent ID',
-				name: 'assignee_id',
+				displayName: 'Identificador do Contato',
+				name: 'identifier',
 				type: 'string',
 				required: true,
 				default: '',
-				displayOptions: { show: { resource: ['conversationAssignment'], operation: ['assignAgent'] } },
-				routing: { send: { type: 'body', property: 'assignee_id' } },
-				description: 'User ID do agente. O agente anterior é substituído. Use 0 pra desatribuir.',
+				placeholder: '+5511999999999 ou ID-cliente-123',
+				displayOptions: { show: { resource: ['conversationAssignment'] } },
+				description: 'O node pega a conversa MAIS RECENTE do contato',
 			},
 			{
-				displayName: 'Team ID',
-				name: 'team_id',
-				type: 'string',
-				required: true,
+				displayName: 'Agente',
+				name: 'assignee_id',
+				type: 'options',
 				default: '',
+				required: true,
+				displayOptions: { show: { resource: ['conversationAssignment'], operation: ['assignAgent'] } },
+				typeOptions: { loadOptionsMethod: 'getAgents' },
+				routing: { send: { type: 'body', property: 'assignee_id' } },
+				description: 'O agente anterior é substituído pelo selecionado',
+			},
+			{
+				displayName: 'Time',
+				name: 'team_id',
+				type: 'options',
+				default: '',
+				required: true,
 				displayOptions: { show: { resource: ['conversationAssignment'], operation: ['assignTeam'] } },
+				typeOptions: { loadOptionsMethod: 'getTeams' },
 				routing: { send: { type: 'body', property: 'team_id' } },
-				description: 'Team ID. O team anterior é substituído. Use 0 pra desatribuir.',
+				description: 'O time anterior é substituído pelo selecionado',
 			},
 
 			// ═══════════════════════════════════════════════════════════════════
-			//                        CUSTOM ATTRIBUTE
+			//                        CONTACT FIELD (=Custom Attribute)
 			// ═══════════════════════════════════════════════════════════════════
 			{
 				displayName: 'Operation',
@@ -1431,20 +1654,96 @@ export class Chatwoot implements INodeType {
 						action: 'List contact fields',
 						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/custom_attribute_definitions' } },
 					},
+					{
+						name: 'Create',
+						value: 'create',
+						action: 'Create a contact field',
+						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/custom_attribute_definitions' } },
+					},
+					{
+						name: 'Find',
+						value: 'find',
+						action: 'Find a contact field by ID',
+						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/custom_attribute_definitions/{{$parameter["customAttributeId"]}}' } },
+					},
 				],
 				default: 'list',
 			},
 			{
-				displayName: 'Attribute Type',
+				displayName: 'Filtrar por Tipo',
 				name: 'attribute_model',
 				type: 'options',
-				default: 0,
+				default: 1,
 				options: [
-					{ name: 'Conversation', value: 0 },
-					{ name: 'Contact', value: 1 },
+					{ name: 'Campos do Contato', value: 1 },
+					{ name: 'Campos da Conversa', value: 0 },
 				],
 				displayOptions: { show: { resource: ['customAttribute'], operation: ['list'] } },
 				routing: { send: { type: 'query', property: 'attribute_model' } },
+			},
+			{
+				displayName: 'ID do Campo',
+				name: 'customAttributeId',
+				type: 'string',
+				required: true,
+				default: '',
+				displayOptions: { show: { resource: ['customAttribute'], operation: ['find'] } },
+			},
+			{
+				displayName: 'Nome do Campo',
+				name: 'attribute_display_name',
+				type: 'string',
+				required: true,
+				default: '',
+				placeholder: 'Preferência de Contato',
+				displayOptions: { show: { resource: ['customAttribute'], operation: ['create'] } },
+				routing: { send: { type: 'body', property: 'attribute_display_name' } },
+				description: 'Nome que aparece na UI. Vai virar attribute_key automaticamente (preferencia_de_contato).',
+			},
+			{
+				displayName: 'Tipo de Campo',
+				name: 'attribute_display_type',
+				type: 'options',
+				default: 0,
+				required: true,
+				options: [
+					{ name: 'Texto', value: 0 },
+					{ name: 'Número', value: 1 },
+					{ name: 'Moeda', value: 2 },
+					{ name: 'Porcentagem', value: 3 },
+					{ name: 'Link', value: 4 },
+					{ name: 'Data', value: 5 },
+					{ name: 'Lista (Opções)', value: 6 },
+					{ name: 'Sim/Não', value: 7 },
+				],
+				displayOptions: { show: { resource: ['customAttribute'], operation: ['create'] } },
+				routing: { send: { type: 'body', property: 'attribute_display_type' } },
+			},
+			{
+				displayName: 'Aplica-se a',
+				name: 'attribute_model_create',
+				type: 'options',
+				default: 1,
+				required: true,
+				options: [
+					{ name: 'Contato', value: 1 },
+					{ name: 'Conversa', value: 0 },
+				],
+				displayOptions: { show: { resource: ['customAttribute'], operation: ['create'] } },
+				routing: { send: { type: 'body', property: 'attribute_model' } },
+			},
+			{
+				displayName: 'Configurações Avançadas',
+				name: 'fieldAdvanced',
+				type: 'collection',
+				placeholder: 'Adicionar configuração',
+				default: {},
+				displayOptions: { show: { resource: ['customAttribute'], operation: ['create'] } },
+				options: [
+					{ displayName: 'Descrição', name: 'attribute_description', type: 'string', default: '', routing: { send: { type: 'body', property: 'attribute_description' } } },
+					{ displayName: 'Valores (pra Lista — separados por vírgula)', name: 'attribute_values', type: 'string', default: '', placeholder: 'opção 1, opção 2, opção 3', routing: { send: { type: 'body', property: 'attribute_values', value: '={{$value.split(",").map(s => s.trim()).filter(Boolean)}}' } } },
+					{ displayName: 'Chave Customizada (attribute_key)', name: 'attribute_key', type: 'string', default: '', description: 'Deixe vazio pra gerar do nome automaticamente', routing: { send: { type: 'body', property: 'attribute_key' } } },
+				],
 			},
 
 			// ═══════════════════════════════════════════════════════════════════
@@ -1950,7 +2249,7 @@ export class Chatwoot implements INodeType {
 			},
 
 			// ═══════════════════════════════════════════════════════════════════
-			//                             LABEL
+			//                             TAG (=Label)
 			// ═══════════════════════════════════════════════════════════════════
 			{
 				displayName: 'Operation',
@@ -1965,8 +2264,61 @@ export class Chatwoot implements INodeType {
 						action: 'List tags',
 						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/labels' } },
 					},
+					{
+						name: 'Create',
+						value: 'create',
+						action: 'Create a tag',
+						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/labels' } },
+					},
+					{
+						name: 'Update',
+						value: 'update',
+						action: 'Update a tag',
+						routing: { request: { method: 'PATCH', url: '=/api/v1/accounts/{{$credentials.accountId}}/labels/{{$parameter["labelId"]}}' } },
+					},
+					{
+						name: 'Delete',
+						value: 'delete',
+						action: 'Delete a tag',
+						routing: { request: { method: 'DELETE', url: '=/api/v1/accounts/{{$credentials.accountId}}/labels/{{$parameter["labelId"]}}' } },
+					},
 				],
 				default: 'list',
+			},
+			{
+				displayName: 'Tag',
+				name: 'labelId',
+				type: 'options',
+				default: '',
+				required: true,
+				typeOptions: { loadOptionsMethod: 'getLabels' },
+				displayOptions: { show: { resource: ['label'], operation: ['update', 'delete'] } },
+				description: 'Tag a ser atualizada/excluída',
+			},
+			{
+				displayName: 'Nome da Tag',
+				name: 'title',
+				type: 'string',
+				required: true,
+				default: '',
+				placeholder: 'vip',
+				displayOptions: { show: { resource: ['label'], operation: ['create'] } },
+				routing: { send: { type: 'body', property: 'title' } },
+				description: 'Nome curto, sem espaço. Aparece nos contatos/conversas.',
+			},
+			{
+				displayName: 'Configurações Avançadas',
+				name: 'tagAdvanced',
+				type: 'collection',
+				placeholder: 'Adicionar configuração',
+				default: {},
+				displayOptions: { show: { resource: ['label'], operation: ['create', 'update'] } },
+				options: [
+					{ displayName: 'Novo Nome', name: 'title', type: 'string', default: '', displayOptions: { show: { '/operation': ['update'] } }, routing: { send: { type: 'body', property: 'title' } } },
+					{ displayName: 'Descrição', name: 'description', type: 'string', default: '', routing: { send: { type: 'body', property: 'description' } } },
+					{ displayName: 'Cor', name: 'color', type: 'color', default: '#1F93FF', routing: { send: { type: 'body', property: 'color' } } },
+					{ displayName: 'Mostrar na Sidebar', name: 'show_on_sidebar', type: 'boolean', default: true, routing: { send: { type: 'body', property: 'show_on_sidebar' } } },
+				],
 			},
 
 			// ═══════════════════════════════════════════════════════════════════
@@ -1980,85 +2332,62 @@ export class Chatwoot implements INodeType {
 				displayOptions: { show: { resource: ['lifecycleStage'] } },
 				options: [
 					{
-						name: 'List',
+						name: 'Update Contact Lifecycle',
+						value: 'updateContactStage',
+						action: 'Update the lifecycle stage of a contact',
+						routing: {
+							request: { method: 'PATCH', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' },
+							send: { preSend: [lifecycleUpdateContactPreSend] },
+						},
+					},
+					{
+						name: 'Remove Contact Lifecycle',
+						value: 'removeContactStage',
+						action: 'Remove the lifecycle stage of a contact',
+						routing: {
+							request: { method: 'PATCH', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' },
+							send: { preSend: [lifecycleUpdateContactPreSend] },
+						},
+					},
+					{
+						name: 'List Stages',
 						value: 'list',
-						action: 'List lifecycle stages',
+						action: 'List lifecycle stage definitions',
 						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/lifecycle_stages' } },
 					},
-					{
-						name: 'Create',
-						value: 'create',
-						action: 'Create a lifecycle stage',
-						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/lifecycle_stages' } },
-					},
-					{
-						name: 'Get',
-						value: 'get',
-						action: 'Get a lifecycle stage',
-						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/lifecycle_stages/{{$parameter["lifecycleStageId"]}}' } },
-					},
-					{
-						name: 'Update',
-						value: 'update',
-						action: 'Update a lifecycle stage',
-						routing: { request: { method: 'PATCH', url: '=/api/v1/accounts/{{$credentials.accountId}}/lifecycle_stages/{{$parameter["lifecycleStageId"]}}' } },
-					},
-					{
-						name: 'Delete',
-						value: 'delete',
-						action: 'Delete a lifecycle stage',
-						routing: { request: { method: 'DELETE', url: '=/api/v1/accounts/{{$credentials.accountId}}/lifecycle_stages/{{$parameter["lifecycleStageId"]}}' } },
-					},
 				],
-				default: 'list',
+				default: 'updateContactStage',
 			},
 			{
-				displayName: 'Lifecycle Stage ID',
+				displayName: 'Tipo de Identificador',
+				name: 'identifierType',
+				type: 'options',
+				default: 'phone_number',
+				options: [
+					{ name: 'Telefone (E.164)', value: 'phone_number' },
+					{ name: 'Identifier (Custom ID)', value: 'identifier' },
+				],
+				required: true,
+				displayOptions: { show: { resource: ['lifecycleStage'], operation: ['updateContactStage', 'removeContactStage'] } },
+			},
+			{
+				displayName: 'Identificador do Contato',
+				name: 'identifier',
+				type: 'string',
+				required: true,
+				default: '',
+				placeholder: '+5511999999999 ou ID-cliente-123',
+				displayOptions: { show: { resource: ['lifecycleStage'], operation: ['updateContactStage', 'removeContactStage'] } },
+			},
+			{
+				displayName: 'Estágio do Ciclo de Vida',
 				name: 'lifecycleStageId',
-				type: 'string',
-				required: true,
+				type: 'options',
 				default: '',
-				displayOptions: { show: { resource: ['lifecycleStage'], operation: ['get', 'update', 'delete'] } },
-			},
-			{
-				displayName: 'Name',
-				name: 'name',
-				type: 'string',
 				required: true,
-				default: '',
-				displayOptions: { show: { resource: ['lifecycleStage'], operation: ['create'] } },
-				routing: { send: { type: 'body', property: 'name' } },
-			},
-			{
-				displayName: 'Create Fields',
-				name: 'createFields',
-				type: 'collection',
-				placeholder: 'Add field',
-				default: {},
-				displayOptions: { show: { resource: ['lifecycleStage'], operation: ['create'] } },
-				options: [
-					{ displayName: 'Description', name: 'description', type: 'string', default: '', routing: { send: { type: 'body', property: 'description' } } },
-					{ displayName: 'Color', name: 'color', type: 'color', default: '#1F93FF', routing: { send: { type: 'body', property: 'color' } } },
-					{ displayName: 'Position', name: 'position', type: 'number', default: 0, routing: { send: { type: 'body', property: 'position' } } },
-					{ displayName: 'Is Default', name: 'is_default', type: 'boolean', default: false, routing: { send: { type: 'body', property: 'is_default' } } },
-					{ displayName: 'Is Lost', name: 'is_lost', type: 'boolean', default: false, routing: { send: { type: 'body', property: 'is_lost' } } },
-				],
-			},
-			{
-				displayName: 'Update Fields',
-				name: 'updateFields',
-				type: 'collection',
-				placeholder: 'Add field',
-				default: {},
-				displayOptions: { show: { resource: ['lifecycleStage'], operation: ['update'] } },
-				options: [
-					{ displayName: 'Name', name: 'name', type: 'string', default: '', routing: { send: { type: 'body', property: 'name' } } },
-					{ displayName: 'Description', name: 'description', type: 'string', default: '', routing: { send: { type: 'body', property: 'description' } } },
-					{ displayName: 'Color', name: 'color', type: 'color', default: '#1F93FF', routing: { send: { type: 'body', property: 'color' } } },
-					{ displayName: 'Position', name: 'position', type: 'number', default: 0, routing: { send: { type: 'body', property: 'position' } } },
-					{ displayName: 'Is Default', name: 'is_default', type: 'boolean', default: false, routing: { send: { type: 'body', property: 'is_default' } } },
-					{ displayName: 'Is Lost', name: 'is_lost', type: 'boolean', default: false, routing: { send: { type: 'body', property: 'is_lost' } } },
-				],
+				typeOptions: { loadOptionsMethod: 'getLifecycleStages' },
+				displayOptions: { show: { resource: ['lifecycleStage'], operation: ['updateContactStage'] } },
+				description: 'Selecione o estágio a aplicar no contato',
 			},
 
 			// ═══════════════════════════════════════════════════════════════════
@@ -2072,41 +2401,48 @@ export class Chatwoot implements INodeType {
 				displayOptions: { show: { resource: ['message'] } },
 				options: [
 					{
+						name: 'Send',
+						value: 'create',
+						action: 'Send a message to a contact',
+						routing: {
+							request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations' },
+							send: { preSend: [messageCreatePreSend] },
+						},
+					},
+					{
 						name: 'List',
 						value: 'list',
-						action: 'List messages of a conversation',
-						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/messages' } },
-					},
-					{
-						name: 'Create',
-						value: 'create',
-						action: 'Send a message',
-						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/messages' } },
-					},
-					{
-						name: 'Delete',
-						value: 'delete',
-						action: 'Delete a message',
-						routing: { request: { method: 'DELETE', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/messages/{{$parameter["messageId"]}}' } },
+						action: 'List messages of a contact conversation',
+						routing: {
+							request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations' },
+							send: { preSend: [messageListPreSend] },
+						},
 					},
 				],
-				default: 'list',
+				default: 'create',
 			},
 			{
-				displayName: 'Conversation ID',
-				name: 'conversationId',
-				type: 'string',
+				displayName: 'Tipo de Identificador',
+				name: 'identifierType',
+				type: 'options',
+				default: 'phone_number',
+				options: [
+					{ name: 'Telefone (E.164)', value: 'phone_number' },
+					{ name: 'Identifier (Custom ID)', value: 'identifier' },
+				],
 				required: true,
-				default: '',
 				displayOptions: { show: { resource: ['message'] } },
+				description: 'Como você quer identificar o contato. O node busca a conversa mais recente dele.',
 			},
 			{
-				displayName: 'Message ID',
-				name: 'messageId',
+				displayName: 'Identificador do Contato',
+				name: 'identifier',
 				type: 'string',
 				required: true,
 				default: '',
-				displayOptions: { show: { resource: ['message'], operation: ['delete'] } },
+				placeholder: '+5511999999999 ou ID-cliente-123',
+				displayOptions: { show: { resource: ['message'] } },
+				description: 'Telefone E.164 (+55...) ou identifier custom do contato',
 			},
 			{
 				displayName: 'Mensagem',
