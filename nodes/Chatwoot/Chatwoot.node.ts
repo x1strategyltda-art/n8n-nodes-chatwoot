@@ -462,15 +462,11 @@ async function enrichContactWithLifecycleStage(
 		const sid = Number(contact.lifecycle_stage_id);
 		if (!Number.isNaN(sid) && stagesMap.has(sid)) {
 			const stage = stagesMap.get(sid)!;
-			contact.lifecycle_stage = {
-				id: stage.id,
-				title: stage.title,
-				emoji: stage.emoji,
-				color: stage.color,
-				position: stage.position,
-			};
+			const emoji = stage.emoji ? `${stage.emoji} ` : '';
+			const title = String(stage.title ?? `Stage ${stage.id}`);
+			contact.lifecycle_stage_title = `${emoji}${title}`;
 		} else {
-			contact.lifecycle_stage = null;
+			contact.lifecycle_stage_title = null;
 		}
 		return contact;
 	};
