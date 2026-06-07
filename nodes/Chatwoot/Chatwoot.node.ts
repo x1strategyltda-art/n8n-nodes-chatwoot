@@ -545,18 +545,17 @@ export class Chatwoot implements INodeType {
 				options: [
 					{ name: 'Agent', value: 'agent' },
 					{ name: 'Contact', value: 'contact' },
-					{ name: 'Contact Label', value: 'contactLabel' },
+					{ name: 'Contact Field', value: 'customAttribute' },
+					{ name: 'Contact Tag', value: 'contactLabel' },
 					{ name: 'Conversation', value: 'conversation' },
 					{ name: 'Conversation Assignment', value: 'conversationAssignment' },
-					{ name: 'Conversation Label', value: 'conversationLabel' },
-					{ name: 'Custom Attribute', value: 'customAttribute' },
 					{ name: 'Flow (ChatBot)', value: 'flow' },
 					{ name: 'Flow Run (ChatBot)', value: 'flowRun' },
 					{ name: 'Inbox', value: 'inbox' },
-					{ name: 'Label', value: 'label' },
 					{ name: 'Lifecycle Stage (ChatBot)', value: 'lifecycleStage' },
 					{ name: 'Message', value: 'message' },
 					{ name: 'Profile', value: 'profile' },
+					{ name: 'Tag', value: 'label' },
 					{ name: 'Team', value: 'team' },
 				],
 				default: 'contact',
@@ -1217,7 +1216,7 @@ export class Chatwoot implements INodeType {
 					{
 						name: 'List',
 						value: 'list',
-						action: 'List labels of a contact',
+						action: 'List tags of a contact',
 						routing: {
 							request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' },
 							send: { preSend: [listLabelsByIdentifierPreSend] },
@@ -1226,7 +1225,7 @@ export class Chatwoot implements INodeType {
 					{
 						name: 'Add',
 						value: 'add',
-						action: 'Add labels to a contact',
+						action: 'Add tags to a contact',
 						routing: {
 							request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' },
 							send: { preSend: [addLabelsToContactPreSend] },
@@ -1235,7 +1234,7 @@ export class Chatwoot implements INodeType {
 					{
 						name: 'Remove',
 						value: 'remove',
-						action: 'Remove labels from a contact',
+						action: 'Remove tags from a contact',
 						routing: {
 							request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/contacts' },
 							send: { preSend: [removeLabelsFromContactPreSend] },
@@ -1269,7 +1268,7 @@ export class Chatwoot implements INodeType {
 				description: 'Valor do identificador escolhido acima',
 			},
 			{
-				displayName: 'Labels',
+				displayName: 'Tags',
 				name: 'contactLabels',
 				type: 'multiOptions',
 				default: [],
@@ -1279,7 +1278,7 @@ export class Chatwoot implements INodeType {
 					loadOptionsMethod: 'getLabels',
 				},
 				description:
-					'Selecione as labels. Refresh manual via 3-pontinhos da lista pra recarregar quando adicionar novas no Chatwoot.',
+					'Selecione as tags. Refresh manual via 3-pontinhos da lista pra recarregar quando adicionar novas no ChatBot.',
 			},
 
 			// ═══════════════════════════════════════════════════════════════════
@@ -1293,28 +1292,10 @@ export class Chatwoot implements INodeType {
 				displayOptions: { show: { resource: ['conversation'] } },
 				options: [
 					{
-						name: 'Meta',
-						value: 'meta',
-						action: 'Get conversations meta',
-						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/meta' } },
-					},
-					{
 						name: 'List',
 						value: 'list',
 						action: 'List conversations',
 						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations' } },
-					},
-					{
-						name: 'Create',
-						value: 'create',
-						action: 'Create a conversation',
-						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations' } },
-					},
-					{
-						name: 'Filter',
-						value: 'filter',
-						action: 'Filter conversations',
-						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/filter' } },
 					},
 					{
 						name: 'Get',
@@ -1323,34 +1304,10 @@ export class Chatwoot implements INodeType {
 						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}' } },
 					},
 					{
-						name: 'Toggle Status',
+						name: 'Update Status',
 						value: 'toggleStatus',
-						action: 'Toggle conversation status',
+						action: 'Open or close a conversation',
 						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/toggle_status' } },
-					},
-					{
-						name: 'Toggle Priority',
-						value: 'togglePriority',
-						action: 'Toggle conversation priority',
-						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/toggle_priority' } },
-					},
-					{
-						name: 'Toggle Typing',
-						value: 'toggleTyping',
-						action: 'Toggle typing status',
-						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/toggle_typing_status' } },
-					},
-					{
-						name: 'Set Custom Attributes',
-						value: 'setCustomAttributes',
-						action: 'Set conversation custom attributes',
-						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/custom_attributes' } },
-					},
-					{
-						name: 'Reporting Events',
-						value: 'reportingEvents',
-						action: 'Get reporting events for a conversation',
-						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/reporting_events' } },
 					},
 				],
 				default: 'list',
@@ -1361,12 +1318,7 @@ export class Chatwoot implements INodeType {
 				type: 'string',
 				required: true,
 				default: '',
-				displayOptions: {
-					show: {
-						resource: ['conversation'],
-						operation: ['get', 'toggleStatus', 'togglePriority', 'toggleTyping', 'setCustomAttributes', 'reportingEvents'],
-					},
-				},
+				displayOptions: { show: { resource: ['conversation'], operation: ['get', 'toggleStatus'] } },
 			},
 			{
 				displayName: 'List Filters',
@@ -1380,61 +1332,9 @@ export class Chatwoot implements INodeType {
 					{ displayName: 'Status', name: 'status', type: 'options', default: 'open', options: [{ name: 'Open', value: 'open' }, { name: 'Resolved', value: 'resolved' }, { name: 'Pending', value: 'pending' }, { name: 'Snoozed', value: 'snoozed' }], routing: { send: { type: 'query', property: 'status' } } },
 					{ displayName: 'Inbox ID', name: 'inbox_id', type: 'string', default: '', routing: { send: { type: 'query', property: 'inbox_id' } } },
 					{ displayName: 'Team ID', name: 'team_id', type: 'string', default: '', routing: { send: { type: 'query', property: 'team_id' } } },
-					{ displayName: 'Labels', name: 'labels', type: 'multiOptions', default: [], typeOptions: { loadOptionsMethod: 'getLabels' }, routing: { send: { type: 'query', property: 'labels', value: '={{$value.join(",")}}' } } },
+					{ displayName: 'Tags', name: 'labels', type: 'multiOptions', default: [], typeOptions: { loadOptionsMethod: 'getLabels' }, routing: { send: { type: 'query', property: 'labels', value: '={{$value.join(",")}}' } } },
 					{ displayName: 'Q (Search Text)', name: 'q', type: 'string', default: '', routing: { send: { type: 'query', property: 'q' } } },
 					{ displayName: 'Page', name: 'page', type: 'number', default: 1, routing: { send: { type: 'query', property: 'page' } } },
-				],
-			},
-			{
-				displayName: 'Filter Payload (JSON)',
-				name: 'filterPayload',
-				type: 'json',
-				default: '{\n  "payload": []\n}',
-				displayOptions: { show: { resource: ['conversation'], operation: ['filter'] } },
-				routing: { send: { type: 'body' } },
-			},
-			{
-				displayName: 'Source ID',
-				name: 'source_id',
-				type: 'string',
-				required: true,
-				default: '',
-				displayOptions: { show: { resource: ['conversation'], operation: ['create'] } },
-				routing: { send: { type: 'body', property: 'source_id' } },
-				description: 'Identificador único do contato no inbox (ex: phone E.164 pra WhatsApp)',
-			},
-			{
-				displayName: 'Inbox ID',
-				name: 'inbox_id',
-				type: 'string',
-				required: true,
-				default: '',
-				displayOptions: { show: { resource: ['conversation'], operation: ['create'] } },
-				routing: { send: { type: 'body', property: 'inbox_id' } },
-			},
-			{
-				displayName: 'Contact ID',
-				name: 'contact_id',
-				type: 'string',
-				required: true,
-				default: '',
-				displayOptions: { show: { resource: ['conversation'], operation: ['create'] } },
-				routing: { send: { type: 'body', property: 'contact_id' } },
-			},
-			{
-				displayName: 'Create Fields',
-				name: 'createConversationFields',
-				type: 'collection',
-				placeholder: 'Add field',
-				default: {},
-				displayOptions: { show: { resource: ['conversation'], operation: ['create'] } },
-				options: [
-					{ displayName: 'Assignee ID', name: 'assignee_id', type: 'string', default: '', routing: { send: { type: 'body', property: 'assignee_id' } } },
-					{ displayName: 'Team ID', name: 'team_id', type: 'string', default: '', routing: { send: { type: 'body', property: 'team_id' } } },
-					{ displayName: 'Status', name: 'status', type: 'options', default: 'open', options: [{ name: 'Open', value: 'open' }, { name: 'Resolved', value: 'resolved' }, { name: 'Pending', value: 'pending' }, { name: 'Snoozed', value: 'snoozed' }], routing: { send: { type: 'body', property: 'status' } } },
-					{ displayName: 'Initial Message Content', name: 'initialMessageContent', type: 'string', default: '', routing: { send: { type: 'body', property: 'message', value: '={{ { content: $value } }}' } } },
-					{ displayName: 'Custom Attributes (JSON)', name: 'custom_attributes', type: 'json', default: '{}', routing: { send: { type: 'body', property: 'custom_attributes' } } },
-					{ displayName: 'Additional Attributes (JSON)', name: 'additional_attributes', type: 'json', default: '{}', routing: { send: { type: 'body', property: 'additional_attributes' } } },
 				],
 			},
 			{
@@ -1460,41 +1360,6 @@ export class Chatwoot implements INodeType {
 				displayOptions: { show: { resource: ['conversation'], operation: ['toggleStatus'], status: ['snoozed'] } },
 				routing: { send: { type: 'body', property: 'snoozed_until' } },
 			},
-			{
-				displayName: 'Priority',
-				name: 'priority',
-				type: 'options',
-				default: 'medium',
-				options: [
-					{ name: 'Urgent', value: 'urgent' },
-					{ name: 'High', value: 'high' },
-					{ name: 'Medium', value: 'medium' },
-					{ name: 'Low', value: 'low' },
-					{ name: 'Clear', value: '' },
-				],
-				displayOptions: { show: { resource: ['conversation'], operation: ['togglePriority'] } },
-				routing: { send: { type: 'body', property: 'priority' } },
-			},
-			{
-				displayName: 'Typing Status',
-				name: 'typing_status',
-				type: 'options',
-				default: 'on',
-				options: [
-					{ name: 'On', value: 'on' },
-					{ name: 'Off', value: 'off' },
-				],
-				displayOptions: { show: { resource: ['conversation'], operation: ['toggleTyping'] } },
-				routing: { send: { type: 'body', property: 'typing_status' } },
-			},
-			{
-				displayName: 'Custom Attributes (JSON)',
-				name: 'custom_attributes',
-				type: 'json',
-				default: '{}',
-				displayOptions: { show: { resource: ['conversation'], operation: ['setCustomAttributes'] } },
-				routing: { send: { type: 'body', property: 'custom_attributes' } },
-			},
 
 			// ═══════════════════════════════════════════════════════════════════
 			//                      CONVERSATION ASSIGNMENT
@@ -1507,13 +1372,19 @@ export class Chatwoot implements INodeType {
 				displayOptions: { show: { resource: ['conversationAssignment'] } },
 				options: [
 					{
-						name: 'Assign',
-						value: 'assign',
-						action: 'Assign agent or team to a conversation',
+						name: 'Assign Agent',
+						value: 'assignAgent',
+						action: 'Assign or replace the agent of a conversation',
+						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/assignments' } },
+					},
+					{
+						name: 'Assign Team',
+						value: 'assignTeam',
+						action: 'Assign or replace the team of a conversation',
 						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/assignments' } },
 					},
 				],
-				default: 'assign',
+				default: 'assignAgent',
 			},
 			{
 				displayName: 'Conversation ID',
@@ -1524,61 +1395,24 @@ export class Chatwoot implements INodeType {
 				displayOptions: { show: { resource: ['conversationAssignment'] } },
 			},
 			{
-				displayName: 'Assign Fields',
-				name: 'assignFields',
-				type: 'collection',
-				placeholder: 'Add field',
-				default: {},
-				displayOptions: { show: { resource: ['conversationAssignment'] } },
-				options: [
-					{ displayName: 'Assignee ID', name: 'assignee_id', type: 'string', default: '', description: 'User ID do agente. Use 0 pra desatribuir.', routing: { send: { type: 'body', property: 'assignee_id' } } },
-					{ displayName: 'Team ID', name: 'team_id', type: 'string', default: '', description: 'Team ID. Use 0 pra desatribuir team.', routing: { send: { type: 'body', property: 'team_id' } } },
-				],
-			},
-
-			// ═══════════════════════════════════════════════════════════════════
-			//                       CONVERSATION LABEL
-			// ═══════════════════════════════════════════════════════════════════
-			{
-				displayName: 'Operation',
-				name: 'operation',
-				type: 'options',
-				noDataExpression: true,
-				displayOptions: { show: { resource: ['conversationLabel'] } },
-				options: [
-					{
-						name: 'List',
-						value: 'list',
-						action: 'List labels of a conversation',
-						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/labels' } },
-					},
-					{
-						name: 'Update',
-						value: 'update',
-						action: 'Update labels of a conversation',
-						routing: { request: { method: 'POST', url: '=/api/v1/accounts/{{$credentials.accountId}}/conversations/{{$parameter["conversationId"]}}/labels' } },
-					},
-				],
-				default: 'list',
-			},
-			{
-				displayName: 'Conversation ID',
-				name: 'conversationId',
+				displayName: 'Agent ID',
+				name: 'assignee_id',
 				type: 'string',
 				required: true,
 				default: '',
-				displayOptions: { show: { resource: ['conversationLabel'] } },
+				displayOptions: { show: { resource: ['conversationAssignment'], operation: ['assignAgent'] } },
+				routing: { send: { type: 'body', property: 'assignee_id' } },
+				description: 'User ID do agente. O agente anterior é substituído. Use 0 pra desatribuir.',
 			},
 			{
-				displayName: 'Labels',
-				name: 'labels',
+				displayName: 'Team ID',
+				name: 'team_id',
 				type: 'string',
 				required: true,
 				default: '',
-				placeholder: 'priority,vip',
-				displayOptions: { show: { resource: ['conversationLabel'], operation: ['update'] } },
-				routing: { send: { type: 'body', property: 'labels', value: '={{$value.split(",").map(s => s.trim()).filter(Boolean)}}' } },
-				description: 'Lista de labels separados por vírgula. Substitui as labels existentes.',
+				displayOptions: { show: { resource: ['conversationAssignment'], operation: ['assignTeam'] } },
+				routing: { send: { type: 'body', property: 'team_id' } },
+				description: 'Team ID. O team anterior é substituído. Use 0 pra desatribuir.',
 			},
 
 			// ═══════════════════════════════════════════════════════════════════
@@ -1594,7 +1428,7 @@ export class Chatwoot implements INodeType {
 					{
 						name: 'List',
 						value: 'list',
-						action: 'List custom attributes',
+						action: 'List contact fields',
 						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/custom_attribute_definitions' } },
 					},
 				],
@@ -2128,7 +1962,7 @@ export class Chatwoot implements INodeType {
 					{
 						name: 'List',
 						value: 'list',
-						action: 'List labels',
+						action: 'List tags',
 						routing: { request: { method: 'GET', url: '=/api/v1/accounts/{{$credentials.accountId}}/labels' } },
 					},
 				],
@@ -2297,13 +2131,13 @@ export class Chatwoot implements INodeType {
 				routing: { send: { type: 'body', property: 'message_type' } },
 			},
 			{
-				displayName: 'Private (Internal Note)',
+				displayName: 'Mensagem Privada (Nota Interna)',
 				name: 'private',
 				type: 'boolean',
 				default: false,
 				displayOptions: { show: { resource: ['message'], operation: ['create'] } },
 				routing: { send: { type: 'body', property: 'private' } },
-				description: 'Se true, mensagem fica como nota interna (não enviada ao contato)',
+				description: 'Liga pra criar uma nota interna no contato (não é enviada ao cliente, só os agentes veem)',
 			},
 			{
 				displayName: 'Content Type',
@@ -2443,7 +2277,7 @@ export class Chatwoot implements INodeType {
 					{
 						name: 'Inbox Label Matrix',
 						value: 'inboxLabelMatrix',
-						action: 'Get inbox label matrix',
+						action: 'Get inbox tag matrix',
 						routing: { request: { method: 'GET', url: '=/api/v2/accounts/{{$credentials.accountId}}/reports/inbox_label_matrix' } },
 					},
 					{
